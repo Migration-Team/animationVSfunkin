@@ -6,7 +6,9 @@ import flixel.FlxState;
 import flixel.util.FlxColor;
 import flixel.util.FlxTimer;
 import openfl.events.Event;
-import vlc.VlcBitmap;
+#if VIDEOS_ALLOWED
+import vlc.VLCBitmap;
+#end
 
 // THIS IS FOR TESTING
 // DONT STEAL MY CODE >:(
@@ -15,7 +17,7 @@ class MP4Handler
 	public var finishCallback:Void->Void;
 	public var stateCallback:FlxState;
 
-	public var bitmap:VlcBitmap;
+	public var bitmap:VLCBitmap;
 
 	public var sprite:FlxSprite;
 
@@ -35,7 +37,7 @@ class MP4Handler
 			}
 		}
 
-		bitmap = new VlcBitmap();
+		bitmap = new VLCBitmap();
 
 		if (FlxG.stage.stageHeight / 9 < FlxG.stage.stageWidth / 16)
 		{
