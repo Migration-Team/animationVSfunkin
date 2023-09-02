@@ -1,173 +1,183 @@
 package;
 
 import flixel.FlxG;
-import flixel.FlxSprite;
-import flixel.FlxState;
-import flixel.util.FlxColor;
-import flixel.util.FlxTimer;
-import openfl.events.Event;
-#if VIDEOS_ALLOWED
-import vlc.VLCBitmap;
+#if FLX_KEYBOARD
+import flixel.input.keyboard.FlxKey;
 #end
+import vlc.VLCBitmap;
+import openfl.Lib;
+import openfl.events.Event;
+import openfl.utils.Assets;
+import sys.FileSystem;
+import sys.io.File;
 
-// THIS IS FOR TESTING
-// DONT STEAL MY CODE >:(
-class MP4Handler
+enum ScaleType
 {
-	public var finishCallback:Void->Void;
-	public var stateCallback:FlxState;
+	GAME;
+	VIDEO;
+}
 
-	public var bitmap:VLCBitmap;
+/**
+ * Handles video playback.
+ * Use bitmap to connect to a graphic or use `VideoSprite`.
+ */
+class VideoHandler extends VLCBitmap
+{
+	#if FLX_KEYBOARD
+	public var skipKeys:Array<FlxKey> = [ENTER, SPACE];
+	#end
 
-	public var sprite:FlxSprite;
+	#if (FLX_KEYBOARD || FLX_TOUCH)
+	public var canSkip:Bool = true;
+	#end
 
-	public function new()
+	#if FLX_SOUND_SYSTEM
+	public var canUseSound:Bool = true;
+	#end
+
+	public var canUseAutoResize:Bool = true;
+	public var useScaleBy:ScaleType = GAME;
+
+	public var openingCallback:Void->Void = null;
+	public var finishCallback:Void->Void = null;
+
+	#if FLX_SOUND_SYSTEM
+	private var __pauseMusic:Bool = false;
+	#end
+
+	public function new(IndexModifier:Int = 0):Void
 	{
-		//FlxG.autoPause = false;
+		super();
+
+		onOpening = onVLCOpening;
+		onEndReached = onVLCEndReached;
+		onEncounteredError = onVLCEncounteredError;
+
+		FlxG.addChildBelowMouse(this, IndexModifier);
 	}
 
-	public function playMP4(path:String, ?repeat:Bool = false, ?outputTo:FlxSprite = null, ?isWindow:Bool = false, ?isFullscreen:Bool = false,
-			?midSong:Bool = false):Void
+	private function onVLCOpening():Void 
+	{        
+		#if HXC_DEBUG_TRACE
+		trace("the video is opening!");
+		#end
+
+		#if FLX_SOUND_SYSTEM
+		// The Media Player isn't `null at this point...
+		volume = Std.int(((FlxG.sound.muted || !canUseSound) ? 0 : 1) * (FlxG.sound.volume * 100));
+		#end
+
+		if (openingCallback != null)
+		    openingCallback();
+	}
+
+	private function onVLCEncounteredError(msg:String):Void
 	{
-		if (!midSong)
+		Lib.application.window.alert(msg, "VLC Error!");
+		onVLCEndReached();
+	}
+
+	private function onVLCEndReached():Void
+	{
+		#if HXC_DEBUG_TRACE
+		trace("the video reached the end!");
+		#end
+
+		#if FLX_SOUND_SYSTEM
+		if (FlxG.sound.music != null && __pauseMusic)
+			FlxG.sound.music.resume();
+		#end
+
+		if (FlxG.stage.hasEventListener(Event.ENTER_FRAME))
+			FlxG.stage.removeEventListener(Event.ENTER_FRAME, update);
+
+		if (FlxG.autoPause)
 		{
-			if (FlxG.sound.music != null)
-			{
-				FlxG.sound.music.stop();
-			}
+			if (FlxG.signals.focusGained.has(resume))
+				FlxG.signals.focusGained.remove(resume);
+
+			if (FlxG.signals.focusLost.has(pause))
+				FlxG.signals.focusLost.remove(pause);
 		}
 
-		bitmap = new VLCBitmap();
+		dispose();
 
-		if (FlxG.stage.stageHeight / 9 < FlxG.stage.stageWidth / 16)
-		{
-			bitmap.set_width(FlxG.stage.stageHeight * (16 / 9));
-			bitmap.set_height(FlxG.stage.stageHeight);
-		}
-		else
-		{
-			bitmap.set_width(FlxG.stage.stageWidth);
-			bitmap.set_height(FlxG.stage.stageWidth / (16 / 9));
-		}
+		FlxG.removeChild(this);
 
-		
+		if (finishCallback != null)
+			finishCallback();
+	}
 
-		bitmap.onVideoReady = onVLCVideoReady;
-		bitmap.onComplete = onVLCComplete;
-		bitmap.onError = onVLCError;
+	/**
+	 * Plays a video.
+	 *
+	 * @param Path Example: `your/video/here.mp4`
+	 * @param Loop Loop the video.
+	 * @param PauseMusic Pause music until the video ends if `FLX_SOUND_SYSTEM` is defined.
+	 *
+	 * @return 0 if playback started (and was already started), or -1 on error.
+	 */
+	public function playVideo(Path:String, Loop:Bool = false, PauseMusic:Bool = false):Int
+	{
+		#if FLX_SOUND_SYSTEM
+		__pauseMusic = PauseMusic;
+
+		if (FlxG.sound.music != null && PauseMusic)
+			FlxG.sound.music.pause();
+		#end
 
 		FlxG.stage.addEventListener(Event.ENTER_FRAME, update);
 
-		if (repeat)
-			bitmap.repeat = -1; 
+		if (FlxG.autoPause)
+		{
+			FlxG.signals.focusGained.add(resume);
+			FlxG.signals.focusLost.add(pause);
+		}
+
+		// in case if you want to use another dir then the application one.
+		// android can already do this, it can't use application's storage.
+		if (FileSystem.exists(Sys.getCwd() + Path))
+			return play(Sys.getCwd() + Path, Loop);
 		else
-			bitmap.repeat = 0;
+			return play(Path, Loop);
+	}
 
-		bitmap.inWindow = isWindow;
-		bitmap.fullscreen = isFullscreen;
+	private function update(?E:Event):Void
+	{
+		#if desktop
+		if (canSkip && FlxG.keys.anyJustPressed(skipKeys) && isPlaying)
+			onVLCEndReached();
+		#else
+		for (touch in FlxG.touches.list)
+			if (canSkip && touch.justPressed && isPlaying)
+				onVLCEndReached();
+		#end
 
-		FlxG.addChildBelowMouse(bitmap);
-		bitmap.play(checkFile(path));
-
-		if (outputTo != null)
+		if (canUseAutoResize && (videoWidth > 0 && videoHeight > 0))
 		{
-			// lol this is bad kek
-			bitmap.alpha = 0;
-
-			sprite = outputTo;
-		}
-	}
-
-	function checkFile(fileName:String):String
-	{
-		var pDir = "";
-		var appDir = "file:///" + Sys.getCwd() + "/";
-
-		if (fileName.indexOf(":") == -1) // Not a path
-			pDir = appDir;
-		else if (fileName.indexOf("file://") == -1 || fileName.indexOf("http") == -1) // C:, D: etc? ..missing "file:///" ?
-			pDir = "file:///";
-
-		return pDir + fileName;
-	}
-
-	/////////////////////////////////////////////////////////////////////////////////////
-
-	function onVLCVideoReady()
-	{
-		trace("video loaded!");
-
-		if (sprite != null)
-			sprite.loadGraphic(bitmap.bitmapData);
-	}
-
-	public function onVLCComplete()
-	{
-		bitmap.stop();
-
-		// Clean player, just in case! Actually no.
-
-		FlxG.camera.fade(FlxColor.BLACK, 0, false);
-
-		trace("Big, Big Chungus, Big Chungus!");
-
-		new FlxTimer().start(0.3, function(tmr:FlxTimer)
-		{
-			if (finishCallback != null)
-			{
-				finishCallback();
-			}
-			else if (stateCallback != null)
-			{
-				LoadingState.loadAndSwitchState(stateCallback);
-			}
-
-			bitmap.dispose();
-
-			if (FlxG.game.contains(bitmap))
-			{
-				FlxG.game.removeChild(bitmap);
-			}
-		});
-	}
-
-	public function kill()
-	{
-		bitmap.stop();
-
-		if (finishCallback != null)
-		{
-			finishCallback();
+			width = calcSize(0);
+			height = calcSize(1);
 		}
 
-		bitmap.visible = false;
+		#if FLX_SOUND_SYSTEM
+		volume = Std.int(((FlxG.sound.muted || !canUseSound) ? 0 : 1) * (FlxG.sound.volume * 100));
+		#end
 	}
 
-	function onVLCError()
+	public function calcSize(What:Int):Int
 	{
-		if (finishCallback != null)
+		switch (What)
 		{
-			finishCallback();
-		}
-		else if (stateCallback != null)
-		{
-			LoadingState.loadAndSwitchState(stateCallback);
-		}
-	}
-
-	function update(e:Event)
-	{
-		if (FlxG.keys.justPressed.ENTER || FlxG.keys.justPressed.SPACE)
-		{
-			if (bitmap.isPlaying)
-			{
-				onVLCComplete();
-			}
+			case 0:
+				var appliedWidth:Float = Lib.current.stage.stageHeight;
+				appliedWidth *= useScaleBy == GAME ? (FlxG.width / FlxG.height) : (videoWidth / videoHeight);
+				return Std.int(appliedWidth > Lib.current.stage.stageWidth ? Lib.current.stage.stageWidth : appliedWidth);
+			case 1:
+				var appliedHeight:Float = Lib.current.stage.stageWidth;
+				appliedHeight *= useScaleBy == GAME ? (FlxG.height / FlxG.width) : (videoHeight / videoWidth);
+				return Std.int(appliedHeight > Lib.current.stage.stageHeight ? Lib.current.stage.stageHeight : appliedHeight);
 		}
 
-		bitmap.volume = FlxG.sound.volume + 0.3; // shitty volume fix. then make it louder.
-
-		if (FlxG.sound.volume <= 0.1)
-			bitmap.volume = 0;
+		return 0;
 	}
 }
