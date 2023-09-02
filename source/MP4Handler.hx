@@ -45,17 +45,7 @@ class VideoHandler extends VLCBitmap
 	private var __pauseMusic:Bool = false;
 	#end
 
-	public function new(IndexModifier:Int = 0):Void
-	{
-		super();
-
-		onOpening = onVLCOpening;
-		onEndReached = onVLCEndReached;
-		onEncounteredError = onVLCEncounteredError;
-
-		FlxG.addChildBelowMouse(this, IndexModifier);
-	}
-
+	
 	private function onVLCOpening():Void 
 	{        
 		#if HXC_DEBUG_TRACE
@@ -106,6 +96,17 @@ class VideoHandler extends VLCBitmap
 
 		if (finishCallback != null)
 			finishCallback();
+	}
+
+	public function new(IndexModifier:Int = 0):Void
+	{
+		super();
+
+		onOpening = onVLCOpening;
+		onEndReached = onVLCEndReached;
+		onEncounteredError = onVLCEncounteredError;
+
+		FlxG.addChildBelowMouse(this, IndexModifier);
 	}
 
 	/**
